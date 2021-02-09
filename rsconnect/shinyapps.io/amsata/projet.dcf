@@ -1,0 +1,12 @@
+name: projet
+title: projet
+username:
+account: amsata
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 3362989
+bundleId: 3987686
+url: https://amsata.shinyapps.io/projet/
+when: 1607963472.59592
+asMultiple: FALSE
+asStatic: FALSE

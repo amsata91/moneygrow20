@@ -1,0 +1,306 @@
+---
+title: "Untitled"
+output: html_document
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+
+```
+
+
+
+```{r eruptions, echo=FALSE}
+library(shinydashboard)
+library(tidyverse)
+library(tidyr)
+library(dplyr)
+library(sf)
+library(ggplot2)
+library(DT)
+library(readr)
+library(cartography)
+scenes_locations=st_read("./data/GoTRelease/ScenesLocations.shp",crs=4326)
+load("got_data.RData")
+load("got.RData")
+load("amsa.RData")
+load("abdou.RData")
+character_name_list = appearences %>% pull(name) %>% unique()
+ui = dashboardPage(
+  dashboardHeader(title = "Projet"),
+  dashboardSidebar(
+    hr(),
+    sidebarMenu(id="tabs",
+        menuItem("INTRODUCTION", tabName = "Intro", icon = icon("dashboard")),
+        menuItem("DATAFRAME", tabName = "dataframe", icon = icon("table"),
+                 menuSubItem("Donnés non spatiales", tabName = "nonspat",
+                             icon=icon("angle-right")),
+                 menuSubItem("Donnée spatiales", tabName = "spat", icon
+                             =icon("angle-right"))
+               ),
+        menuItem("PERSONNAGES",tabName="perso",icon=icon("fas fa-user")),
+        menuItem("Nouveaux", tabName="etud"))
+  ),
+                                    
+                    
+  dashboardBody(
+    tabItems(
+      # Dataframe
+     #tabItem(tabName = "Intro",
+             #selectInput("id1",label = "BONJOUR",choices = c("DD","DDDD","GGGG")),
+     
+     tabItem(tabName ="nonspat",
+             selectInput("dataset", "Choisir un dataset:",
+                         choices = c("appearences","characters", "episodes","scenes")),
+             numericInput("obs", "Nombre d'observation :", 10),
+             tags$h5("actionButton:"),
+             actionButton("update", "Action button", class = "btn-primary"),
+             p("Click sur bouton pour visualiser tes données"),
+             tags$h5("Téléchargement des données"),
+             downloadButton("downloadData", "Download"),
+             tabsetPanel(
+               tabPanel("Dataset",
+                 h4("Observation"),
+                 tableOutput("view")),
+               tabPanel("Dataset View",
+                 h4("Observation View"),
+                 DT::dataTableOutput('view1')),
+               tabPanel("Summary",
+                 h4("Summary"),
+                 verbatimTextOutput("summary")),
+               tabPanel("str",
+                 h4("str"),
+                 verbatimTextOutput("str")),
+               tabPanel("Etude du dataset Scenes",
+                 h4("Le nombre de personnages morts de la serie"),
+                 verbatimTextOutput("nbth"),
+                 h4("Le nombre de personnages morts lors de la première saison"),
+                 verbatimTextOutput("nbsaison"),
+                 h4("La durée de la scène la plus longue et l’id de l’episode "),
+                 verbatimTextOutput("dur")),
+               tabPanel("Visualisation morts cum",
+                 h4("visualisation des morts cumulés"),
+                 plotOutput("cum"))
+        
+      )),
+     tabItem(tabName = "perso",
+          selectInput("charactername", "Acteurs:",character_name_list),
+          tabsetPanel(
+            tabPanel("Visibilité",
+              h4("L’épisode ou le personnage selectionné à passé plus de temps aux écrans "),
+              verbatimTextOutput("txtout")
+            ),
+            tabPanel("Visualisation de temps de présent",
+                     h4(""),
+                     plotOutput("maplot")),
+            tabPanel("Geolocalisation ",
+                     h4(""),
+                     plotOutput("mapplot"))
+          )
+     
+     ),
+     tabItem(tabName="etud",
+             selectInput("seasonnum", "Choisir le numéro de la saison" ,choices=c(1:8) ),
+             selectInput("episodnum","Choisir le numéro de l'épisode",choices=c(1:73)),
+             tabsetPanel(
+               tabPanel("Nouveaux",
+                        tableOutput("dat")))))))
+             
+             
+     #tabItem(tabName = "nonspat",
+             #selectInput("id3",label = "BONJOURSS",choices = c("DDGG","DDDDB","GGGGN"))
+             #)
+          
+
+  
+
+server = function(input, output) {
+  datasetInput = eventReactive(input$update, {
+    switch(input$dataset,
+           "appearences"=appearences,
+           "characters"=characters,
+           "episodes"=episodes,
+           "scenes"=scenes)
+  }, ignoreNULL = FALSE)
+  output$view = renderTable({
+    head(datasetInput(), n = isolate(input$obs))
+  })
+  output$view1 = DT::renderDataTable(
+    DT::datatable(datasetInput(), options = list(pageLength = 25))
+  )
+  output$summary = renderPrint({
+    dataset = datasetInput()
+    summary(dataset)
+  })
+  output$view = renderTable({
+    head(datasetInput(), n = isolate(input$obs))
+  })
+  output$str = renderPrint({
+    dataset = datasetInput()
+    str(dataset)
+  })
+  output$nbth = renderPrint({
+    dataset = datasetInput()
+    if(dataset==scenes){
+      sum(dataset$nbdeath)
+    }
+    else{
+     output$nbth = print("Vous devez choisir le dataset scenes pour connaitre le nombre #de morts")
+    }
+  })
+  output$nbsaison = renderPrint({
+    dataset = datasetInput()
+    if(dataset==scenes){
+     sum(dataset$nbdeath[dataset$episodeId<=10])
+    }
+  })
+  output$dur = renderPrint({
+    dataset = datasetInput()
+    if(dataset==scenes){
+      dataset[which.max(dataset$duration),]
+     
+    }
+  })
+  output$cum = renderPlot({
+    # nombre de morts cumulé et temps passé
+    deaths = scenes %>% select(nbdeath,duration,location,episodeId) %>%
+      mutate(t=cumsum(duration),tdeath=cumsum(nbdeath))
+    # instant de changement de saison
+    # ? lag
+    season_t = episodes %>% mutate(ld=lag(total_duration)) %>%
+      mutate(ld=if_else(is.na(ld),0,ld), td = cumsum(ld)) %>% 
+      filter(episodeNum==1) %>% pull(td)# nombre de morts cumulé et temps passé
+    # geom_line + labels personalisés
+    ggplot(deaths) + geom_line(aes(x=t/3600,y=tdeath)) +
+      scale_x_continuous("",expand = c(0,0),breaks = season_t/3600,
+                     labels =   paste("Saison",1:8),)+
+      scale_y_continuous("Nombre de morts cumulés", expand=c(0,0))+
+      theme_bw()+theme(axis.text.x=element_text(angle=90))+
+      ggtitle("Evolution du nombre de mort au cours du temps")
+  })
+   # Downloadable csv of selected dataset ----
+  output$downloadData = downloadHandler(
+    filename = function() {
+      paste(input$dataset, ".csv", sep = "")
+    },
+    content = function(file) {
+      write.csv(datasetInput(), file, row.names = FALSE)
+    }
+  )
+  
+      output$txtout = renderPrint({
+     appearances %>%filter(name==input$charactername) %>% 
+        left_join(scenes) %>% left_join(episodes) %>%
+        group_by(name,episodeId,episodeTitle) %>% 
+        summarise(screenTime=sum(duration)) %>% 
+        arrange(desc(screenTime)) %>% head(1)
+    })
+    output$maplot = renderPlot({
+      
+      jstime = appearances %>% filter(name==input$charactername) %>% 
+        left_join(scenes) %>% 
+        group_by(episodeId) %>% 
+        summarise(time=sum(duration))
+    ggplot(jstime) + 
+      geom_line(aes(x=episodeId,y=time))+
+      theme_bw()+
+      xlab("épisode")+ylab("temps")+
+      ggtitle("Temps de présence par épisode ")
+    })
+    
+     output$mapplot = renderPlot({
+ 
+
+        landpol = st_union(st_geometry(land))
+        islandpol = st_union(st_geometry(islands))
+        backpol=st_union(landpol,islandpol)
+        background = st_as_sf(backpol)
+ 
+       loc_time= appearances %>% filter(name %in% input$chartername) %>%
+                 left_join(scenes) %>%
+            group_by(location,input$chartername) %>%
+         summarize(duration=sum(duration,na.rm=TRUE))
+        loc_time_mc = scenes_locations %>% left_join(loc_time)
+ 
+   
+       ggplot()+geom_sf(data=background,color="ivory3" ,fill="ivory")+
+       geom_sf(data=loc_time_mc%>% filter(!is.na(duration)),aes(size=duration))+
+       geom_sf_text(data=loc_time_mc,aes(label=location),color="#000000",vjust="bottom",
+                    family="CM Roman", fontface="italic")+
+         coord_sf(expand = 0, ndiscr = 0)+
+         scale_size_area("Duree (seconde) :",max_size =
+                         8,breaks=c(30,60,120,240,480,500,600))+
+       theme(panel.background = element_rect(fill = "#87cdde",color=NA),
+      text = element_text(family="CM Roman",face = "bold",size = 12),
+      legend.key = element_rect(fill="#ffffff"))+
+       labs(title = "Temps de presence des personnage ",
+         caption = "",x="",y="")
+
+    })
+     
+  output$dat = renderTable({
+    
+    #partiefonction
+
+        data=appearances%>% left_join(scenes)%>% 
+             left_join(episodes)%>%
+             filter(episodeNum==input$episodnum,seasonNum==input$seasonnum)
+  
+      #identifiant de l'episode choisie
+  
+    id=data$episodeId[which((data$episodeNum==input$episodnum)&(data$seasonNum==input$seasonnum ))][1]
+    
+    
+    #titre de l'episode
+    tiltle=data$episodeTitle[which((data$episodeNum==input$episodnum)&(data$seasonNum==input$seasonnum ))][1]
+    
+    
+    # duree totale de l'episode
+    time_tot= data$total_duration[which((data$episodeNum==input$episodnum)&(data$seasonNum==input$seasonnum ))][1]
+    #jointure des tableaux
+    
+    #nombres de morts dans l'épisode
+       nb_mort=sum(data[,"nbdeath"])
+       
+    #nombre totale de scenes
+      nb_scene= data[,"sceneId"]%>% unique()%>% length()
+    #noms de tous les acteurs
+      noms_acteurs=data[,"name"]%>% unique()
+    
+    
+    #le nombre d'acteurs 
+      nb_acteurs=length(noms_acteurs)
+      
+    #Acteurs le plus visible
+    plus_visible= (data%>%group_by(name)%>%
+                     summarise(duree=sum(duration))%>%
+                     arrange(desc(duree)) %>% head(1))[,"name"]
+    
+    #scene la plus longue
+    scene_longue=(data%>%group_by(sceneId)%>%
+                    summarise(duree=sum(duration))%>%
+                    arrange(desc(duree)) %>% head(1))[,"sceneId"]
+    ##lieu le plus visite
+    lieu_plus_visite=(data%>%group_by(location)%>%
+                        summarise(duree=sum(duration))%>%
+                        arrange(desc(duree)) %>% head(1))[,"location"]
+   
+    
+    
+    #####Résultats à la sortie#####
+    
+val=data.frame(id,tiltle,time_tot,nb_mort,nb_scene,scene_longue,nb_acteurs,plus_visible,lieu_plus_visite)
+ names(val)=c("Identite de l'episode","Titre de l'episode","duree totale","Nombre de morts",
+                          "Nombre de scenes","ID de la scene la plus longue","le nombres d'acteurs",
+                          "Acteurs le plus visible","lieu le plus visite") 
+head(val)
+  })      
+     
+     
+
+}
+
+shinyApp(ui, server)
+
+```
+
